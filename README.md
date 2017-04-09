@@ -1,8 +1,8 @@
 # Tika Language Detector File Ingest Module
-File Ingest Autopys Module that uses Tika to detect the language of common file documents
+Autopsy File Ingest Module that uses Tika to detect the language of common file documents
 
 ## Files types supported
-Currenlty programmed to try and process files with the following extensions:
+Currently programmed to try and process files with the following extensions:
 * .doc
 * .docx
 * .xls
