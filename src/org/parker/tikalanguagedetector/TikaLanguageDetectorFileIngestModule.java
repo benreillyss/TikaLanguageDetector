@@ -32,11 +32,14 @@ package org.parker.tikalanguagedetector;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.logging.Level;
+
 import org.sleuthkit.autopsy.coreutils.Logger;
 import org.sleuthkit.autopsy.ingest.FileIngestModule;
 import org.sleuthkit.autopsy.ingest.IngestModule;
@@ -51,42 +54,38 @@ import org.sleuthkit.datamodel.BlackboardArtifact.ARTIFACT_TYPE;
 import org.sleuthkit.datamodel.BlackboardAttribute;
 import org.sleuthkit.datamodel.TskCoreException;
 import org.sleuthkit.datamodel.TskData;
+import org.sleuthkit.datamodel.ReadContentInputStream;
+import org.openide.util.NbBundle;
 
 import org.apache.tika.exception.TikaException;
 import org.apache.tika.langdetect.OptimaizeLangDetector;
-//import org.apache.tika.language.LanguageIdentifier;
 import org.apache.tika.language.detect.LanguageDetector;
 import org.apache.tika.language.detect.LanguageResult;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.AutoDetectParser;
-import org.apache.tika.parser.ParseContext;
-import org.apache.tika.parser.Parser;
 import org.apache.tika.sax.BodyContentHandler;
-import org.apache.tika.language.*;
-import org.openide.util.NbBundle;
-import org.sleuthkit.datamodel.ReadContentInputStream;
 import org.xml.sax.SAXException;
 
 
 /**
- * Sample file ingest module that doesn't do much. Demonstrates per ingest job
- * module settings, use of a subset of the available ingest services and
- * thread-safe sharing of per ingest job data.
+ * File ingest module that checks common document files for their language. 
+ * Demonstrates per ingest job module settings, use of a subset of the available 
+ * ingest services and thread-safe sharing of per ingest job data.
  */
 class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
 
     private IngestJobContext context = null;
-    private static final IngestModuleReferenceCounter refCounter = new IngestModuleReferenceCounter();
-    private static final HashMap<Long, Long> artifactCountsForIngestJobs = new HashMap<>();
+    private static final IngestModuleReferenceCounter REF_COUNTER = new IngestModuleReferenceCounter();
+    private static final HashMap<Long, Long> ART_CNT_FOR_INGEST_JOBS = new HashMap<>();
     private static final BlackboardAttribute.ATTRIBUTE_TYPE LANG_ATTR = BlackboardAttribute.ATTRIBUTE_TYPE.TSK_TEXT_LANGUAGE;
 
     //static LanguageIdentifier detector;
-    static LanguageDetector detector;
-    private static HashMap<String, String> langLookup = new HashMap<String,String>();
+    private static LanguageDetector detector;
+    private static final HashMap<String, String> LANG_LOOKUP = new HashMap<>();
     
-    // Using extensiosn for simple validaiton. This could be improved by using
-    // the mime-type definitions, but the File Type identification module does
-    // not have to be enabled for an ingestion...
+    // Using file extensions for simple validaiton. This could be improved by 
+    // using the mime-type definitions, but the File Type identification module 
+    // does not have to be enabled for an ingestion...
     private static final Set<String> SUPPORTED_EXTENSIONS = new HashSet<>(Arrays.asList(
             new String[] {"doc", "docx", "xls", "xlsx", "ppt", "pptx", "pdf"})); 
     
@@ -94,17 +93,17 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
     public void startUp(IngestJobContext context) throws IngestModuleException {
         
         this.context = context;
-        refCounter.incrementAndGet(context.getJobId());
+        REF_COUNTER.incrementAndGet(context.getJobId());
         
         // Populate the language lookup map with the human readable form of the 
         // ISO code return value.
-        initLookupMap(langLookup);
+        initLookupMap(LANG_LOOKUP);
         
         try {
             detector = new OptimaizeLangDetector().loadModels();
         } catch (IOException ex) {
             // TODO: Update excpetion handling...
-            //Exceptions.printStackTrace(ex);
+            // Exceptions.printStackTrace(ex);
             throw new IngestModule.IngestModuleException(
                     NbBundle.getMessage(TikaLanguageDetectorFileIngestModuleFactory.class, 
                 "TikaLanguageDetectorFileIngestModule.languageModelLoadFailure"), ex);
@@ -132,41 +131,33 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
             // Extracts the text from the file and processes it using Tika's 
             // language detection techniques.
             InputStream in = null;
-            BufferedInputStream bin = null;
             try {
                 InputStream fileStream= new ReadContentInputStream(file);
                 String text = parseExample(fileStream);
                 String language = languageDetection(text);
                 System.out.println("INFO :: " + file.getName() + " :: " + language);
-                
-//                // https://www.tutorialspoint.com/tika/tika_language_detection.htm
-//                Parser parser = new AutoDetectParser();
-//                BodyContentHandler handler = new BodyContentHandler(-1);
-//                Metadata metadata = new Metadata();
-//                in = new ReadContentInputStream(file);
-//                bin = new BufferedInputStream(in);
-//                
-//                parser.parse(in, handler, metadata, new ParseContext());
-                
-//                LanguageIdentifier object = new LanguageIdentifier(handler.toString());
-//                String language = object.getLanguage();
+
                 System.out.println(file.getName() + " language: " + language);
-//                if (object.isReasonablyCertain()){
-//                    System.out.println("INFO :: Reasonably Certain");
-//                }
-                
 
                 // Make an attribute using the ID for the attribute LANG_ATTR 
                 // that was previously created.
-                BlackboardAttribute attr = new BlackboardAttribute(LANG_ATTR, 
+                
+                // After the smutdetect result example...
+                Collection<BlackboardAttribute> attributes = new ArrayList<>();
+                attributes.add(new BlackboardAttribute(LANG_ATTR, 
                         TikaLanguageDetectorFileIngestModuleFactory.getModuleName(), 
-                        language);
-
+                        language));
+                attributes.add(new BlackboardAttribute(
+                        BlackboardAttribute.ATTRIBUTE_TYPE.TSK_SET_NAME.getTypeID(),
+                        TikaLanguageDetectorFileIngestModuleFactory.getModuleName(),
+                        "Language_Detected"));
+                
                 // Add the to the general info artifact for the file. In a
                 // real module, you would likely have more complex data types 
                 // and be making more specific artifacts.
-                BlackboardArtifact art = file.getGenInfoArtifact();
-                art.addAttribute(attr);
+                //BlackboardArtifact art = file.getGenInfoArtifact();
+                BlackboardArtifact art = file.newArtifact(BlackboardArtifact.ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT);
+                art.addAttributes(attributes);
 
                 // This method is thread-safe with per ingest job reference counted
                 // management of shared data.
@@ -175,7 +166,7 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
                 // Fire an event to notify any listeners for blackboard postings.
                 ModuleDataEvent event = new ModuleDataEvent(
                         TikaLanguageDetectorFileIngestModuleFactory.getModuleName(), 
-                        ARTIFACT_TYPE.TSK_GEN_INFO);
+                        ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT);
                 IngestServices.getInstance().fireModuleDataEvent(event);
 
                 return IngestModule.ProcessResult.OK;
@@ -205,22 +196,22 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
     }
 
     synchronized static void addToBlackboardPostCount(long ingestJobId, long countToAdd) {
-        Long fileCount = artifactCountsForIngestJobs.get(ingestJobId);
+        Long fileCount = ART_CNT_FOR_INGEST_JOBS.get(ingestJobId);
 
         // Ensures that this job has an entry
         if (fileCount == null) {
             fileCount = 0L;
-            artifactCountsForIngestJobs.put(ingestJobId, fileCount);
+            ART_CNT_FOR_INGEST_JOBS.put(ingestJobId, fileCount);
         }
 
         fileCount += countToAdd;
-        artifactCountsForIngestJobs.put(ingestJobId, fileCount);
+        ART_CNT_FOR_INGEST_JOBS.put(ingestJobId, fileCount);
     }
 
     synchronized static void reportBlackboardPostCount(long ingestJobId) {
-        Long refCount = refCounter.decrementAndGet(ingestJobId);
+        Long refCount = REF_COUNTER.decrementAndGet(ingestJobId);
         if (refCount == 0) {
-            Long filesCount = artifactCountsForIngestJobs.remove(ingestJobId);
+            Long filesCount = ART_CNT_FOR_INGEST_JOBS.remove(ingestJobId);
             String msgText = String.format("Posted %d times to the blackboard", filesCount);
             IngestMessage message = IngestMessage.createMessage(
                     IngestMessage.MessageType.INFO,
@@ -232,7 +223,8 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
     
     // https://tika.apache.org/1.14/examples.html
     public static String parseExample(InputStream inputStream) throws IOException, SAXException, TikaException {
-        // setting the BodyContentHandler 'ctor to -1 allows bypasses the init 100000 char setup
+        // setting the BodyContentHandler 'ctor to -1 bypasses the init 100000 
+        // char limit for file processing
         BodyContentHandler handler = new BodyContentHandler(-1);
         AutoDetectParser parser = new AutoDetectParser();
         Metadata metadata = new Metadata();
@@ -248,8 +240,8 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
         detector.reset();
         System.out.println("INFO :: language detected :: " + result.getLanguage());
         
-        if (langLookup.containsKey(result.getLanguage())){
-            return langLookup.get(result.getLanguage());
+        if (LANG_LOOKUP.containsKey(result.getLanguage())){
+            return LANG_LOOKUP.get(result.getLanguage());
         } else {
             return result.getLanguage();
         }
