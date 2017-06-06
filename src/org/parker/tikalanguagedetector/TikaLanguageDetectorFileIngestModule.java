@@ -75,6 +75,8 @@ import org.xml.sax.SAXException;
 class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
 
     private IngestJobContext context = null;
+    private long jobId;
+    private static final HashMap<Long, IngestJobTotals> totalsForIngestJobs = new HashMap<>();
     private static final IngestModuleReferenceCounter REF_COUNTER = new IngestModuleReferenceCounter();
     private static final HashMap<Long, Long> ART_CNT_FOR_INGEST_JOBS = new HashMap<>();
     private static final BlackboardAttribute.ATTRIBUTE_TYPE LANG_ATTR = BlackboardAttribute.ATTRIBUTE_TYPE.TSK_TEXT_LANGUAGE;
@@ -93,6 +95,7 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
     public void startUp(IngestJobContext context) throws IngestModuleException {
         
         this.context = context;
+        jobId = context.getJobId();
         REF_COUNTER.incrementAndGet(context.getJobId());
         
         // Populate the language lookup map with the human readable form of the 
@@ -130,13 +133,13 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
         if (SUPPORTED_EXTENSIONS.contains(file.getNameExtension())){
             // Extracts the text from the file and processes it using Tika's 
             // language detection techniques.
-            InputStream in = null;
             try {
+                long startTime = System.currentTimeMillis();
                 InputStream fileStream= new ReadContentInputStream(file);
                 String text = parseExample(fileStream);
                 String language = languageDetection(text);
+                
                 System.out.println("INFO :: " + file.getName() + " :: " + language);
-
                 System.out.println(file.getName() + " language: " + language);
 
                 // Make an attribute using the ID for the attribute LANG_ATTR 
@@ -169,6 +172,7 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
                         ARTIFACT_TYPE.TSK_INTERESTING_FILE_HIT);
                 IngestServices.getInstance().fireModuleDataEvent(event);
 
+                addToTotals(jobId, (System.currentTimeMillis() - startTime));
                 return IngestModule.ProcessResult.OK;
 
             } catch (TskCoreException ex) {
@@ -181,7 +185,9 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
                 IngestServices ingestServices = IngestServices.getInstance();
                 Logger logger = ingestServices.getLogger(
                         TikaLanguageDetectorFileIngestModuleFactory.getModuleName());
-                logger.log(Level.SEVERE, "Error processing file (id = " + file.getId() + ")", ex);
+                logger.log(Level.SEVERE, 
+                           "Error processing file (id = " + file.getId() + ")", 
+                           ex);
                 return IngestModule.ProcessResult.ERROR;
             }
         }
@@ -192,7 +198,36 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
     public void shutDown() {
         // This method is thread-safe with per ingest job reference counted
         // management of shared data.
-        reportBlackboardPostCount(context.getJobId());
+        //reportBlackboardPostCount(context.getJobId());
+        
+        Long refCount = REF_COUNTER.decrementAndGet(jobId);
+        if (refCount == 0) {
+            //Long filesCount = ART_CNT_FOR_INGEST_JOBS.remove(jobId);
+            IngestJobTotals jobTotals;
+            synchronized (this) {
+                jobTotals = totalsForIngestJobs.remove(jobId);
+            }
+            if (jobTotals != null) {
+                StringBuilder detailsSb = new StringBuilder();
+                detailsSb.append("<table border='0' cellpadding='4' width='280'>"); //NON-NLS
+                detailsSb.append("<tr><td>").append(TikaLanguageDetectorFileIngestModuleFactory.getModuleName()).append("</td></tr>"); //NON-NLS
+                detailsSb.append("<tr><td>") //NON-NLS
+                        .append("Total Processing Time")
+                        .append("</td><td>").append(jobTotals.matchTime).append("</td></tr>\n"); //NON-NLS
+                detailsSb.append("<tr><td>") //NON-NLS
+                        .append("Total Files Processed")
+                        .append("</td><td>").append(jobTotals.numFiles).append("</td></tr>\n"); //NON-NLS
+                detailsSb.append("</table>"); //NON-NLS
+            
+            String msgText = String.format("Tika Language Detector Results");
+            IngestMessage message = IngestMessage.createMessage(
+                    IngestMessage.MessageType.INFO,
+                    TikaLanguageDetectorFileIngestModuleFactory.getModuleName(),
+                    msgText,
+                    detailsSb.toString());
+            IngestServices.getInstance().postMessage(message);
+            }
+        }
     }
 
     synchronized static void addToBlackboardPostCount(long ingestJobId, long countToAdd) {
@@ -206,19 +241,6 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
 
         fileCount += countToAdd;
         ART_CNT_FOR_INGEST_JOBS.put(ingestJobId, fileCount);
-    }
-
-    synchronized static void reportBlackboardPostCount(long ingestJobId) {
-        Long refCount = REF_COUNTER.decrementAndGet(ingestJobId);
-        if (refCount == 0) {
-            Long filesCount = ART_CNT_FOR_INGEST_JOBS.remove(ingestJobId);
-            String msgText = String.format("Posted %d times to the blackboard", filesCount);
-            IngestMessage message = IngestMessage.createMessage(
-                    IngestMessage.MessageType.INFO,
-                    TikaLanguageDetectorFileIngestModuleFactory.getModuleName(),
-                    msgText);
-            IngestServices.getInstance().postMessage(message);
-        }
     }
     
     // https://tika.apache.org/1.14/examples.html
@@ -277,5 +299,29 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
         langLookup.put("sv", "Swedish");
         langLookup.put("th", "Thai");
         langLookup.put("uk", "Ukrainian");
+    }
+    
+    /**
+     * Update the match time total and increment number of files processed for
+     * this ingest job.
+     *
+     * @param jobId        The ingest job identifier.
+     * @param matchTimeInc Amount of time to add.
+     */
+    private static synchronized void addToTotals(long jobId, long matchTimeInc) {
+        IngestJobTotals ingestJobTotals = totalsForIngestJobs.get(jobId);
+        if (ingestJobTotals == null) {
+            ingestJobTotals = new IngestJobTotals();
+            totalsForIngestJobs.put(jobId, ingestJobTotals);
+        }
+
+        ingestJobTotals.matchTime += matchTimeInc;
+        ingestJobTotals.numFiles++;
+        totalsForIngestJobs.put(jobId, ingestJobTotals);
+    }
+    
+    private static class IngestJobTotals {
+        long matchTime = 0;
+        long numFiles = 0;
     }
 }    
