@@ -64,6 +64,7 @@ import org.apache.tika.language.detect.LanguageResult;
 import org.apache.tika.metadata.Metadata;
 import org.apache.tika.parser.AutoDetectParser;
 import org.apache.tika.sax.BodyContentHandler;
+import org.sleuthkit.autopsy.coreutils.MessageNotifyUtil;
 import org.xml.sax.SAXException;
 
 
@@ -105,19 +106,29 @@ class TikaLanguageDetectorFileIngestModule implements FileIngestModule {
         try {
             detector = new OptimaizeLangDetector().loadModels();
         } catch (IOException ex) {
-            // TODO: Update excpetion handling...
-            // Exceptions.printStackTrace(ex);
             throw new IngestModule.IngestModuleException(
                     NbBundle.getMessage(TikaLanguageDetectorFileIngestModuleFactory.class, 
-                "TikaLanguageDetectorFileIngestModule.languageModelLoadFailure"), ex);
+                    "TikaLanguageDetectorFileIngestModule.languageModelLoadFailure"), 
+                    ex);
         }
     }
 
     @Override
     public IngestModule.ProcessResult process(AbstractFile file) {
 
-        // TODO: Add the "Check for canceled job" logic here?
-
+        // TODO: Make logger global
+        if (this.context.fileIngestIsCancelled() == true) {
+            // if it was cancelled by the user, result is OK
+            IngestServices ingestServices = IngestServices.getInstance();
+            Logger logger = ingestServices.getLogger(
+                    TikaLanguageDetectorFileIngestModuleFactory.getModuleName());
+            logger.log(Level.INFO, "PhotoRec cancelled by user"); // NON-NLS
+            MessageNotifyUtil.Notify.info(
+                    TikaLanguageDetectorFileIngestModuleFactory.getModuleName(),
+                    "Tika Language Detector cancelled by user");
+            return IngestModule.ProcessResult.OK;
+        }
+        
         // Skip anything other than actual file system files.
         if ((file.getType() == TskData.TSK_DB_FILES_TYPE_ENUM.UNALLOC_BLOCKS)
                 || (file.getType() == TskData.TSK_DB_FILES_TYPE_ENUM.UNUSED_BLOCKS)
